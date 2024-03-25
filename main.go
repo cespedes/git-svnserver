@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"log"
 	"os"
@@ -32,57 +33,14 @@ func run() error {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("svnRevs: %v\n", svnRevs)
+	lastRev := len(svnRevs) - 1
+	fmt.Printf("Last rev: %d\n", lastRev)
+	fmt.Printf("rev[0] = %s\n", svnRevs[0])
+	if lastRev > 0 {
+		fmt.Printf("rev[1] = %s\n", svnRevs[1])
+		fmt.Printf("rev[%d] = %s\n", lastRev, svnRevs[lastRev])
+	}
 
-	/*
-		branches, err := repo.Branches()
-		if err != nil {
-			log.Fatal(err)
-		}
-		err = branches.ForEach(func(ref *plumbing.Reference) error {
-			fmt.Printf("one branch: %v\n", ref)
-			//if ref.Type() == plumbing.HashReference {
-			//	fmt.Println(ref)
-			//}
-			return nil
-		})
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		head, err := repo.Head()
-		if err != nil {
-			log.Fatal(err)
-		}
-		fmt.Printf("head: %v\n", head)
-
-		logs, err := repo.Log(&git.LogOptions{Order: git.LogOrderCommitterTime})
-		if err != nil {
-			log.Fatal(err)
-		}
-		err = logs.ForEach(func(c *object.Commit) error {
-			fmt.Printf("history hash: %v\n", c.Hash)
-			return nil
-		})
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		fs := osfs.New("/tmp")
-
-		f, err := fs.OpenFile("git-svn-refs.txt", os.O_RDWR|os.O_CREATE, 0666)
-		if err != nil {
-			log.Fatal("openfile: " + err.Error())
-		}
-		defer f.Close()
-
-		err = f.Lock()
-		if err != nil {
-			log.Fatal("lock: " + err.Error())
-		}
-		defer f.Unlock()
-		fmt.Fprintln(f, "one line")
-	*/
 	return nil
 }
 
@@ -90,24 +48,72 @@ func syncSvnRevs(repodir string, repo *git.Repository) ([]plumbing.Hash, error) 
 	if _, err := os.Lstat(path.Join(repodir, ".git")); err == nil {
 		repodir = path.Join(repodir, ".git")
 	}
+	svnHashes := []plumbing.Hash{plumbing.ZeroHash}
+	svnMap := make(map[plumbing.Hash]bool)
 	revsFile := path.Join(repodir, "git-svn-refs.txt")
-	_ = revsFile
+	fp, err := os.Open(revsFile)
+	if err == nil {
+		scanner := bufio.NewScanner(fp)
+		for scanner.Scan() {
+			h := plumbing.NewHash(scanner.Text())
+			svnMap[h] = true
+			svnHashes = append(svnHashes, h)
+		}
+		fp.Close()
+		if err := scanner.Err(); err != nil {
+			return nil, fmt.Errorf("%s: %w", revsFile, err)
+		}
+	}
+	fp = nil
 
-	var hashes []plumbing.Hash
+	var gitHashes []plumbing.Hash
 
 	logs, err := repo.Log(&git.LogOptions{Order: git.LogOrderCommitterTime})
 	if err != nil {
 		log.Fatal(err)
 	}
 	err = logs.ForEach(func(c *object.Commit) error {
-		hashes = append(hashes, c.Hash)
+		gitHashes = append(gitHashes, c.Hash)
 		return nil
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("len(hashes) = %d\n", len(hashes))
-	hashes = append(hashes, plumbing.ZeroHash)
-	slices.Reverse(hashes)
-	return hashes, nil
+	slices.Reverse(gitHashes)
+	fmt.Printf("len(gitHashes) = %d\n", len(gitHashes))
+	for _, h := range gitHashes {
+		if !svnMap[h] {
+			fmt.Printf("Hash %s not found in SVN map\n", h)
+			if fp == nil {
+				fp, err = os.OpenFile(revsFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+				if err != nil {
+					return nil, err
+				}
+				defer fp.Close()
+			}
+			_, err = fp.WriteString(h.String() + "\n")
+			if err != nil {
+				return nil, err
+			}
+			svnMap[h] = true
+			svnHashes = append(svnHashes, h)
+		}
+	}
+
+	return svnHashes, nil
 }
+
+/*
+	f, err := fs.OpenFile("git-svn-refs.txt", os.O_RDWR|os.O_CREATE, 0666)
+	if err != nil {
+		log.Fatal("openfile: " + err.Error())
+	}
+	defer f.Close()
+
+	err = f.Lock()
+	if err != nil {
+		log.Fatal("lock: " + err.Error())
+	}
+	defer f.Unlock()
+	fmt.Fprintln(f, "one line")
+*/
