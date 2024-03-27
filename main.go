@@ -25,31 +25,31 @@ type App struct {
 	Repo    *git.Repository
 }
 
-func (app *App) OpenRepo() error {
-	u, err := url.Parse(app.Server.ReposInfo.URL)
-	if err != nil {
-		return err
-	}
-
-	app.RepoDir = u.Path
-
-	app.Repo, err = git.PlainOpen(app.RepoDir)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
 func run() error {
 	var app App
 
-	app.Server.GetLatestRev = func() (int, error) {
-		if app.Repo == nil {
-			err := app.OpenRepo()
-			if err != nil {
-				return 0, err
-			}
+	app.Server.Greet = func(version int, capabilities []string, URL string,
+		raclient string, client *string) (svn.ReposInfo, error) {
+		var reposInfo svn.ReposInfo
+
+		u, err := url.Parse(URL)
+		if err != nil {
+			return reposInfo, err
 		}
+		app.RepoDir = u.Path
+		app.Repo, err = git.PlainOpen(app.RepoDir)
+		if err != nil {
+			return reposInfo, err
+		}
+
+		reposInfo.UUID = "c5a7a7b1-3e3e-4c98-a541-f46ece210564"
+		reposInfo.URL = URL
+		reposInfo.Capabilities = make([]string, 0)
+
+		return reposInfo, nil
+	}
+
+	app.Server.GetLatestRev = func() (int, error) {
 		svnRevs, err := syncSvnRevs(app.RepoDir, app.Repo)
 		if err != nil {
 			return 0, err
@@ -59,12 +59,6 @@ func run() error {
 		return lastRev, nil
 	}
 	app.Server.Stat = func(path string, rev *uint) (svn.Dirent, error) {
-		if app.Repo == nil {
-			err := app.OpenRepo()
-			if err != nil {
-				return svn.Dirent{}, err
-			}
-		}
 		svnRevs, err := syncSvnRevs(app.RepoDir, app.Repo)
 		if err != nil {
 			return svn.Dirent{}, err
