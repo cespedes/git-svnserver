@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path"
 	"slices"
 
+	"github.com/cespedes/svn"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -17,31 +19,102 @@ func main() {
 	run()
 }
 
+type App struct {
+	Server  svn.Server
+	RepoDir string
+	Repo    *git.Repository
+}
+
+func (app *App) OpenRepo() error {
+	u, err := url.Parse(app.Server.ReposInfo.URL)
+	if err != nil {
+		return err
+	}
+
+	app.RepoDir = u.Path
+
+	app.Repo, err = git.PlainOpen(app.RepoDir)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func run() error {
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "Usage: git-svnserver <repo.git>")
-		os.Exit(1)
-	}
-	repodir := os.Args[1]
+	var app App
 
-	repo, err := git.PlainOpen(repodir)
+	app.Server.GetLatestRev = func() (int, error) {
+		if app.Repo == nil {
+			err := app.OpenRepo()
+			if err != nil {
+				return 0, err
+			}
+		}
+		svnRevs, err := syncSvnRevs(app.RepoDir, app.Repo)
+		if err != nil {
+			return 0, err
+		}
+
+		lastRev := len(svnRevs) - 1
+		return lastRev, nil
+	}
+	app.Server.Stat = func(path string, rev *uint) (svn.Dirent, error) {
+		if app.Repo == nil {
+			err := app.OpenRepo()
+			if err != nil {
+				return svn.Dirent{}, err
+			}
+		}
+		svnRevs, err := syncSvnRevs(app.RepoDir, app.Repo)
+		if err != nil {
+			return svn.Dirent{}, err
+		}
+
+		lastRev := uint(len(svnRevs) - 1)
+
+		return svn.Dirent{
+			Kind:        "dir",
+			CreatedRev:  lastRev,
+			CreatedDate: "2024-03-18T14:50:07.758412Z",
+		}, nil
+	}
+	app.Server.CheckPath = func(path string, rev *uint) (string, error) {
+		return "dir", nil
+	}
+
+	err := app.Server.Serve(os.Stdin, os.Stdout)
 	if err != nil {
 		log.Fatal(err)
-	}
-
-	svnRevs, err := syncSvnRevs(repodir, repo)
-	if err != nil {
-		log.Fatal(err)
-	}
-	lastRev := len(svnRevs) - 1
-	fmt.Printf("Last rev: %d\n", lastRev)
-	fmt.Printf("rev[0] = %s\n", svnRevs[0])
-	if lastRev > 0 {
-		fmt.Printf("rev[1] = %s\n", svnRevs[1])
-		fmt.Printf("rev[%d] = %s\n", lastRev, svnRevs[lastRev])
 	}
 
 	return nil
+
+	/*
+		if len(os.Args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: git-svnserver <repo.git>")
+			os.Exit(1)
+		}
+		repodir := os.Args[1]
+
+		repo, err := git.PlainOpen(repodir)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		svnRevs, err := syncSvnRevs(repodir, repo)
+		if err != nil {
+			log.Fatal(err)
+		}
+		lastRev := len(svnRevs) - 1
+		fmt.Printf("Last rev: %d\n", lastRev)
+		fmt.Printf("rev[0] = %s\n", svnRevs[0])
+		if lastRev > 0 {
+			fmt.Printf("rev[1] = %s\n", svnRevs[1])
+			fmt.Printf("rev[%d] = %s\n", lastRev, svnRevs[lastRev])
+		}
+
+		return nil
+	*/
 }
 
 func syncSvnRevs(repodir string, repo *git.Repository) ([]plumbing.Hash, error) {
@@ -80,10 +153,10 @@ func syncSvnRevs(repodir string, repo *git.Repository) ([]plumbing.Hash, error) 
 		log.Fatal(err)
 	}
 	slices.Reverse(gitHashes)
-	fmt.Printf("len(gitHashes) = %d\n", len(gitHashes))
+	// fmt.Printf("len(gitHashes) = %d\n", len(gitHashes))
 	for _, h := range gitHashes {
 		if !svnMap[h] {
-			fmt.Printf("Hash %s not found in SVN map\n", h)
+			// fmt.Printf("Hash %s not found in SVN map\n", h)
 			if fp == nil {
 				fp, err = os.OpenFile(revsFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 				if err != nil {
