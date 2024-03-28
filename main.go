@@ -2,12 +2,15 @@ package main
 
 import (
 	"bufio"
+	"crypto/md5"
 	"fmt"
+	"io"
 	"log"
 	"net/url"
 	"os"
 	"path"
 	"slices"
+	"strings"
 
 	"github.com/cespedes/svn"
 	"github.com/go-git/go-git/v5"
@@ -15,56 +18,93 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
+const logFile = ""
+
 func main() {
 	run()
 }
 
 type App struct {
-	Server  svn.Server
-	RepoDir string
-	Repo    *git.Repository
+	Server   svn.Server
+	Target   string // target URL received from the client
+	RepoDir  string // absolute PATH to the repository
+	Relative string // relative PATH inside the repository
+	Repo     *git.Repository
+	SvnRevs  []plumbing.Hash
+	Log      io.Writer
 }
 
 func run() error {
 	var app App
 
+	if logFile != "" {
+		app.Log, _ = os.OpenFile(logFile, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
+	}
+
 	app.Server.Greet = func(version int, capabilities []string, URL string,
 		raclient string, client *string) (svn.ReposInfo, error) {
 		var reposInfo svn.ReposInfo
+
+		if app.Log != nil {
+			fmt.Fprintf(app.Log, "Greet(%d,%v,%q,%q,%v)\n",
+				version, capabilities, URL, raclient, client)
+		}
 
 		u, err := url.Parse(URL)
 		if err != nil {
 			return reposInfo, err
 		}
-		app.RepoDir = u.Path
-		app.Repo, err = git.PlainOpen(app.RepoDir)
+
+		app.Target = URL
+		targetPath := path.Clean(u.Path)
+		u.Path = targetPath
+		for {
+			repo, err := git.PlainOpen(u.Path)
+			if err == nil {
+				app.RepoDir = u.Path
+				app.Relative = strings.TrimPrefix(targetPath, app.RepoDir)
+				app.Relative = strings.TrimPrefix(app.Relative, "/")
+				app.Repo = repo
+				break
+			}
+			u.Path = path.Join(u.Path, "..")
+			if u.Path == "/" {
+				return reposInfo, err
+			}
+		}
+
+		if app.Log != nil {
+			fmt.Fprintf(app.Log, "app=%+v\n", app)
+		}
+
+		reposInfo.URL = u.String()
+		uuid := md5.Sum([]byte(app.RepoDir))
+		reposInfo.UUID = fmt.Sprintf("%x%x%x%x-%x%x-%x%x-%x%x-%x%x%x%x%x%x",
+			uuid[0], uuid[1], uuid[2], uuid[3],
+			uuid[4], uuid[5], uuid[6], uuid[7], uuid[8], uuid[9],
+			uuid[10], uuid[11], uuid[12], uuid[13], uuid[14], uuid[15])
+		reposInfo.Capabilities = make([]string, 0)
+
+		app.SvnRevs, err = syncSvnRevs(app.RepoDir, app.Repo)
 		if err != nil {
 			return reposInfo, err
 		}
-
-		reposInfo.UUID = "c5a7a7b1-3e3e-4c98-a541-f46ece210564"
-		reposInfo.URL = URL
-		reposInfo.Capabilities = make([]string, 0)
 
 		return reposInfo, nil
 	}
 
 	app.Server.GetLatestRev = func() (int, error) {
-		svnRevs, err := syncSvnRevs(app.RepoDir, app.Repo)
-		if err != nil {
-			return 0, err
+		if app.Log != nil {
+			fmt.Fprintf(app.Log, "GetLastRev()\n")
 		}
-
-		lastRev := len(svnRevs) - 1
+		lastRev := len(app.SvnRevs) - 1
 		return lastRev, nil
 	}
-	app.Server.Stat = func(path string, rev *uint) (svn.Dirent, error) {
-		svnRevs, err := syncSvnRevs(app.RepoDir, app.Repo)
-		if err != nil {
-			return svn.Dirent{}, err
+	app.Server.Stat = func(p string, rev *uint) (svn.Dirent, error) {
+		if app.Log != nil {
+			fmt.Fprintf(app.Log, "Stat(%q->%q,%v)\n", p, path.Join(app.Relative, p), rev)
 		}
-
-		lastRev := uint(len(svnRevs) - 1)
+		lastRev := uint(len(app.SvnRevs) - 1)
 
 		return svn.Dirent{
 			Kind:        "dir",
