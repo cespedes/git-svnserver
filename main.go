@@ -15,6 +15,7 @@ import (
 	"github.com/cespedes/svn"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
@@ -100,16 +101,55 @@ func run() error {
 		lastRev := len(app.SvnRevs) - 1
 		return lastRev, nil
 	}
-	app.Server.Stat = func(p string, rev *uint) (svn.Dirent, error) {
+	app.Server.Stat = func(p string, prev *uint) (svn.Dirent, error) {
 		if app.Log != nil {
-			fmt.Fprintf(app.Log, "Stat(%q->%q,%v)\n", p, path.Join(app.Relative, p), rev)
+			fmt.Fprintf(app.Log, "Stat(%q->%q,%v)\n", p, path.Join(app.Relative, p), prev)
 		}
-		lastRev := uint(len(app.SvnRevs) - 1)
+		var rev uint
+		if prev != nil {
+			rev = *prev
+		} else {
+			rev = uint(len(app.SvnRevs) - 1)
+		}
+		if rev >= uint(len(app.SvnRevs)) {
+			return svn.Dirent{}, fmt.Errorf("no such revision %d", rev)
+		}
+
+		commit, err := app.Repo.CommitObject(app.SvnRevs[rev])
+		if err != nil {
+			return svn.Dirent{}, err
+		}
+		kind := "dir"
+		var size uint64
+		if app.Relative != "" {
+			tree, err := commit.Tree()
+			if err != nil {
+				return svn.Dirent{}, err
+			}
+			entry, err := tree.FindEntry(app.Relative)
+			if err != nil {
+				return svn.Dirent{}, err
+			}
+			switch entry.Mode {
+			case filemode.Dir:
+			case filemode.Regular, filemode.Deprecated, filemode.Executable:
+				kind = "file"
+				file, err := tree.TreeEntryFile(entry)
+				if err != nil {
+					return svn.Dirent{}, err
+				}
+				size = uint64(file.Size)
+			default:
+				return svn.Dirent{}, fmt.Errorf("%s: filemode %o unsupported", app.Relative, entry.Mode)
+			}
+		}
 
 		return svn.Dirent{
-			Kind:        "dir",
-			CreatedRev:  lastRev,
-			CreatedDate: "2024-03-18T14:50:07.758412Z",
+			Kind:        kind,
+			Size:        size,
+			CreatedRev:  rev,
+			LastAuthor:  commit.Author.Email,
+			CreatedDate: commit.Author.When.UTC().Format("2006-01-02T15:04:05.000000Z"),
 		}, nil
 	}
 	app.Server.CheckPath = func(path string, rev *uint) (string, error) {
