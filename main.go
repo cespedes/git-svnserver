@@ -132,7 +132,8 @@ func run() error {
 			}
 			switch entry.Mode {
 			case filemode.Dir:
-			case filemode.Regular, filemode.Deprecated, filemode.Executable:
+			case filemode.Regular, filemode.Deprecated, filemode.Executable, filemode.Symlink:
+				// TODO maybe filemode.Symlink should return something else?
 				kind = "file"
 				file, err := tree.TreeEntryFile(entry)
 				if err != nil {
