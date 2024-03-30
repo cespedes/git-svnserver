@@ -121,12 +121,13 @@ func run() error {
 		}
 		kind := "dir"
 		var size uint64
-		if app.Relative != "" {
+		if app.Relative != "" || p != "" {
+			p = path.Join(app.Relative, p)
 			tree, err := commit.Tree()
 			if err != nil {
 				return svn.Dirent{}, err
 			}
-			entry, err := tree.FindEntry(app.Relative)
+			entry, err := tree.FindEntry(p)
 			if err != nil {
 				return svn.Dirent{}, err
 			}
@@ -141,7 +142,7 @@ func run() error {
 				}
 				size = uint64(file.Size)
 			default:
-				return svn.Dirent{}, fmt.Errorf("%s: filemode %o unsupported", app.Relative, entry.Mode)
+				return svn.Dirent{}, fmt.Errorf("%s: filemode %o unsupported", p, entry.Mode)
 			}
 		}
 
@@ -153,9 +154,87 @@ func run() error {
 			CreatedDate: commit.Author.When.UTC().Format("2006-01-02T15:04:05.000000Z"),
 		}, nil
 	}
-	app.Server.CheckPath = func(path string, rev *uint) (string, error) {
-		return "dir", nil
+	app.Server.List = func(p string, prev *uint, depth string, fields []string, pattern []string) ([]svn.Dirent, error) {
+		var rev uint
+		if prev != nil {
+			rev = *prev
+		} else {
+			rev = uint(len(app.SvnRevs) - 1)
+		}
+
+		commit, err := app.Repo.CommitObject(app.SvnRevs[rev])
+		if err != nil {
+			return nil, err
+		}
+		tree, err := commit.Tree()
+		if err != nil {
+			return nil, err
+		}
+
+		pp := path.Join(app.Relative, p)
+		if pp != "" {
+			tree, err = tree.Tree(pp)
+			if err != nil {
+				dir, err := app.Server.Stat(p, prev)
+				if err != nil {
+					return nil, err
+				}
+				dir.Path = path.Join("/", app.Relative, p)
+				return []svn.Dirent{dir}, nil
+			}
+		}
+
+		dirents := make([]svn.Dirent, 0)
+		for _, entry := range tree.Entries {
+			kind := "dir"
+			var size uint64
+			switch entry.Mode {
+			case filemode.Dir:
+			case filemode.Regular, filemode.Deprecated, filemode.Executable, filemode.Symlink:
+				// TODO maybe filemode.Symlink should return something else?
+				kind = "file"
+				file, err := tree.TreeEntryFile(&entry)
+				if err != nil {
+					return nil, err
+				}
+				size = uint64(file.Size)
+			default:
+				return nil, fmt.Errorf("%s: filemode %o unsupported", app.Relative, entry.Mode)
+			}
+			dirents = append(dirents, svn.Dirent{
+				Path:        path.Join("/", pp, entry.Name),
+				Kind:        kind,
+				Size:        size,
+				HasProps:    false,
+				CreatedRev:  rev,
+				LastAuthor:  commit.Author.Email,
+				CreatedDate: commit.Author.When.UTC().Format("2006-01-02T15:04:05.000000Z"),
+			})
+		}
+
+		/*
+			if app.Relative != "" {
+				switch entry.Mode {
+				case filemode.Dir:
+				case filemode.Regular, filemode.Deprecated, filemode.Executable, filemode.Symlink:
+					// TODO maybe filemode.Symlink should return something else?
+					kind = "file"
+					file, err := tree.TreeEntryFile(entry)
+					if err != nil {
+						return svn.Dirent{}, err
+					}
+					size = uint64(file.Size)
+				default:
+					return svn.Dirent{}, fmt.Errorf("%s: filemode %o unsupported", app.Relative, entry.Mode)
+				}
+			}
+		*/
+
+		return dirents, nil
 	}
+	//app.Server.CheckPath = func(path string, rev *uint) (string, error) {
+	//	return "dir", nil
+	//}
 
 	err := app.Server.Serve(os.Stdin, os.Stdout)
 	if err != nil {
