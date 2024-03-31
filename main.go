@@ -211,26 +211,44 @@ func run() error {
 				CreatedDate: commit.Author.When.UTC().Format("2006-01-02T15:04:05.000000Z"),
 			})
 		}
-
-		/*
-			if app.Relative != "" {
-				switch entry.Mode {
-				case filemode.Dir:
-				case filemode.Regular, filemode.Deprecated, filemode.Executable, filemode.Symlink:
-					// TODO maybe filemode.Symlink should return something else?
-					kind = "file"
-					file, err := tree.TreeEntryFile(entry)
-					if err != nil {
-						return svn.Dirent{}, err
-					}
-					size = uint64(file.Size)
-				default:
-					return svn.Dirent{}, fmt.Errorf("%s: filemode %o unsupported", app.Relative, entry.Mode)
-				}
-			}
-		*/
-
 		return dirents, nil
+	}
+	app.Server.GetFile = func(p string, prev *uint, wantProps bool, wantContents bool) (uint, []svn.PropList, []byte, error) {
+		var rev uint
+		if prev != nil {
+			rev = *prev
+		} else {
+			rev = uint(len(app.SvnRevs) - 1)
+		}
+		if rev >= uint(len(app.SvnRevs)) {
+			return 0, nil, nil, fmt.Errorf("no such revision %d", rev)
+		}
+		commit, err := app.Repo.CommitObject(app.SvnRevs[rev])
+		if err != nil {
+			return 0, nil, nil, err
+		}
+		if app.Relative != "" || p != "" {
+			p = path.Join(app.Relative, p)
+			tree, err := commit.Tree()
+			if err != nil {
+				return 0, nil, nil, err
+			}
+			file, err := tree.File(p)
+			if err != nil {
+				return 0, nil, nil, err
+			}
+			rd, err := file.Blob.Reader()
+			if err != nil {
+				return 0, nil, nil, err
+			}
+			defer rd.Close()
+			content, err := io.ReadAll(rd)
+			if err != nil {
+				return 0, nil, nil, err
+			}
+			return rev, nil, content, nil
+		}
+		return 0, nil, nil, fmt.Errorf("Attempted to get checksum of a *non*-file node")
 	}
 	//app.Server.CheckPath = func(path string, rev *uint) (string, error) {
 	//	return "dir", nil
