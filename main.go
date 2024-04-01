@@ -250,9 +250,46 @@ func run() error {
 		}
 		return 0, nil, nil, fmt.Errorf("Attempted to get checksum of a *non*-file node")
 	}
-	//app.Server.CheckPath = func(path string, rev *uint) (string, error) {
-	//	return "dir", nil
-	//}
+	app.Server.CheckPath = func(p string, prev *uint) (string, error) {
+		if app.Log != nil {
+			fmt.Fprintf(app.Log, "CheckPath(%q->%q,%v)\n", p, path.Join(app.Relative, p), prev)
+		}
+		var rev uint
+		if prev != nil {
+			rev = *prev
+		} else {
+			rev = uint(len(app.SvnRevs) - 1)
+		}
+		if rev >= uint(len(app.SvnRevs)) {
+			return "none", nil
+		}
+
+		commit, err := app.Repo.CommitObject(app.SvnRevs[rev])
+		if err != nil {
+			return "", err
+		}
+		if app.Relative != "" || p != "" {
+			p = path.Join(app.Relative, p)
+			tree, err := commit.Tree()
+			if err != nil {
+				return "", err
+			}
+			entry, err := tree.FindEntry(p)
+			if err != nil {
+				return "none", nil
+			}
+			switch entry.Mode {
+			case filemode.Dir:
+				return "dir", nil
+			case filemode.Regular, filemode.Deprecated, filemode.Executable, filemode.Symlink:
+				// TODO maybe filemode.Symlink should return something else?
+				return "file", nil
+			default:
+				return "", fmt.Errorf("%s: filemode %o unsupported", p, entry.Mode)
+			}
+		}
+		return "dir", nil
+	}
 
 	err := app.Server.Serve(os.Stdin, os.Stdout)
 	if err != nil {

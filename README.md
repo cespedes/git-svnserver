@@ -25,16 +25,24 @@ The following SVN protocol commands are currently implemented:
 - `get-latest-rev`
 - `stat`
 - `list`
+- `get-file`
 
-The following SVN commands are currently implemented:
+The following SVN commands are currently working against this server:
 
-- `svn info` (without `-r` argument)
-- `svn ls` (without `-r` argument)
+- `svn info`
+- `svn ls`
+- `svn cat`
 
 # TO-DO list
 
-- Command `log` (needed for `-r` argument in `svn info`, `svn ls`, `svn cat`)
-- Command `get-file` (needed for `svn cat`)
+- Command `log` (needed for `svn log`)
 - "last changed" (author, rev and date) show information for
   the whole commit, not for the file inside the commit.
-- Command `get-iprops` (needed for `svn checkout`)
+- Command `update` (needed for `svn checkout`)
+
+# Non-working SVN commands
+
+- `svn log`
+- `svn checkount`
+- `svn blame`
+- `svn proplist`
