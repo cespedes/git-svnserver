@@ -27,22 +27,21 @@ The following SVN protocol commands are currently implemented:
 - `list`
 - `get-file`
 
-The following SVN commands are currently working against this server:
+The following SVN commands are currently working against this server (at least in part):
 
 - `svn info`
 - `svn ls`
 - `svn cat`
+- `svn log`
 
 # TO-DO list
 
-- Command `log` (needed for `svn log`)
 - "last changed" (author, rev and date) show information for
   the whole commit, not for the file inside the commit.
 - Command `update` (needed for `svn checkout`)
 
 # Non-working SVN commands
 
-- `svn log`
-- `svn checkount`
+- `svn checkout`
 - `svn blame`
 - `svn proplist`

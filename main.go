@@ -291,39 +291,60 @@ func run() error {
 		return "dir", nil
 	}
 
+	app.Server.Log = func(paths []string, startRev uint, endRev uint) ([]svn.LogEntry, error) {
+		if app.Log != nil {
+			fmt.Fprintf(app.Log, "Log(%d-%d)\n", startRev, endRev)
+		}
+		if startRev >= uint(len(app.SvnRevs)) || endRev > startRev {
+			return nil, fmt.Errorf("log: wrong revisions %d-%d", startRev, endRev)
+		}
+		var entries []svn.LogEntry
+		for rev := startRev; rev >= max(endRev, 1); rev-- {
+			commit, err := app.Repo.CommitObject(app.SvnRevs[rev])
+			if err != nil {
+				return nil, fmt.Errorf("finding commit %d (%s): %w", rev, app.SvnRevs[rev], err)
+			}
+			entry := svn.LogEntry{
+				Changed: nil,
+				Rev:     rev,
+				Author:  commit.Author.Email,
+				Date:    commit.Author.When.UTC().Format("2006-01-02T15:04:05.000000Z"),
+				Message: commit.Message,
+			}
+			entries = append(entries, entry)
+		}
+		return entries, nil
+		/*
+			if app.Relative != "" || p != "" {
+				p = path.Join(app.Relative, p)
+				tree, err := commit.Tree()
+				if err != nil {
+					return "", err
+				}
+				entry, err := tree.FindEntry(p)
+				if err != nil {
+					return "none", nil
+				}
+				switch entry.Mode {
+				case filemode.Dir:
+					return "dir", nil
+				case filemode.Regular, filemode.Deprecated, filemode.Executable, filemode.Symlink:
+					// TODO maybe filemode.Symlink should return something else?
+					return "file", nil
+				default:
+					return "", fmt.Errorf("%s: filemode %o unsupported", p, entry.Mode)
+				}
+			}
+			return "dir", nil
+		*/
+	}
+
 	err := app.Server.Serve(os.Stdin, os.Stdout)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	return nil
-
-	/*
-		if len(os.Args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: git-svnserver <repo.git>")
-			os.Exit(1)
-		}
-		repodir := os.Args[1]
-
-		repo, err := git.PlainOpen(repodir)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		svnRevs, err := syncSvnRevs(repodir, repo)
-		if err != nil {
-			log.Fatal(err)
-		}
-		lastRev := len(svnRevs) - 1
-		fmt.Printf("Last rev: %d\n", lastRev)
-		fmt.Printf("rev[0] = %s\n", svnRevs[0])
-		if lastRev > 0 {
-			fmt.Printf("rev[1] = %s\n", svnRevs[1])
-			fmt.Printf("rev[%d] = %s\n", lastRev, svnRevs[lastRev])
-		}
-
-		return nil
-	*/
 }
 
 func syncSvnRevs(repodir string, repo *git.Repository) ([]plumbing.Hash, error) {
