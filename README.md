@@ -8,7 +8,8 @@ right now, **many things do not work** (yet).
 
 # How does this work
 
-The program accepts a path to a Git repo.
+The program behaves like the "svnserve -t" command: it reads commands and sends
+responses via stdin / stdout.
 
 The list of all the commits up to the HEAD are stored in `.git/git-svn-refs.txt`,
 which is used to number them as SVN revisions.
