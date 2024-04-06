@@ -338,6 +338,11 @@ func run() error {
 			return "dir", nil
 		*/
 	}
+	app.Server.Update = func(rev *uint, target string, recurse bool) {
+		if app.Log != nil {
+			fmt.Fprintf(app.Log, "Update()\n")
+		}
+	}
 
 	err := app.Server.Serve(os.Stdin, os.Stdout)
 	if err != nil {

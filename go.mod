@@ -3,7 +3,7 @@ module github.com/cespedes/git-svnserver
 go 1.22.1
 
 require (
-	github.com/cespedes/svn v0.1.0
+	github.com/cespedes/svn v0.1.1
 	github.com/go-git/go-git/v5 v5.12.0
 )
 
