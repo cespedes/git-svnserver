@@ -348,6 +348,11 @@ func run() error {
 			fmt.Fprintf(app.Log, "SetPath()\n")
 		}
 	}
+	app.Server.FinishReport = func() {
+		if app.Log != nil {
+			fmt.Fprintf(app.Log, "Finish()\n")
+		}
+	}
 
 	err := app.Server.Serve(os.Stdin, os.Stdout)
 	if err != nil {
