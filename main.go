@@ -291,7 +291,7 @@ func run() error {
 		return "dir", nil
 	}
 
-	app.Server.Log = func(paths []string, startRev uint, endRev uint) ([]svn.LogEntry, error) {
+	app.Server.Log = func(paths []string, startRev uint, endRev uint, changedPaths bool) ([]svn.LogEntry, error) {
 		if app.Log != nil {
 			fmt.Fprintf(app.Log, "Log(%d-%d)\n", startRev, endRev)
 		}
@@ -348,10 +348,11 @@ func run() error {
 			fmt.Fprintf(app.Log, "SetPath()\n")
 		}
 	}
-	app.Server.FinishReport = func() {
+	app.Server.FinishReport = func() ([]svn.Item, error) {
 		if app.Log != nil {
 			fmt.Fprintf(app.Log, "Finish()\n")
 		}
+		return nil, nil
 	}
 
 	err := app.Server.Serve(os.Stdin, os.Stdout)
