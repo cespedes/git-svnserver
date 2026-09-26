@@ -83,8 +83,9 @@ func ancestorDirs(leafPath string) []string {
 // does not detect renames/copies -- a rename shows up as a delete plus an
 // add), plus one entry for each ancestor directory that itself started or
 // stopped existing as a direct result (e.g. adding the first file under a
-// new directory also reports that directory as added) -- matching how a
-// real svnserve reports directory add/remove alongside file changes.
+// new directory also reports that directory as added) -- confirmed
+// against a real svnserve, which reports a newly-added directory
+// alongside the files added under it the same way.
 func (r *Repo) changedPaths(rev uint) ([]svn.ChangedPath, error) {
 	curTree, err := r.treeForRev(rev)
 	if err != nil {

@@ -105,7 +105,10 @@ func run(in io.Reader, out io.Writer) error {
 // filterByPattern keeps only the entries whose base name matches at least
 // one of the given glob patterns, or all of them if pattern is empty. The
 // queried directory's own entry (dirents[0]; see gitrepo.Repo.List) is
-// always kept, matching a real svnserve.
+// always kept regardless: a real svnserve always includes it in a "list"
+// response (confirmed by testing against one), so this conservatively
+// keeps that shape even under a pattern filter, though it wasn't tested
+// specifically against a real svnserve's own "--search" handling.
 func filterByPattern(dirents []svn.Dirent, pattern []string) []svn.Dirent {
 	if len(pattern) == 0 || len(dirents) == 0 {
 		return dirents

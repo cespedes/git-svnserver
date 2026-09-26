@@ -14,8 +14,9 @@ It is built on top of [`github.com/cespedes/svn`](https://github.com/cespedes/sv
 Git repository itself).
 
 This is a work in progress. Only one branch — the repository's `HEAD` — is
-exposed, there is no write support (SVN clients see a read-only repository),
-and only a subset of ra_svn is implemented so far.
+exposed, and only a subset of ra_svn is implemented so far. There is no
+write support yet (SVN clients see a read-only repository): that depends on
+`github.com/cespedes/svn` gaining commit support on the server side first.
 
 ## Status
 
@@ -23,7 +24,7 @@ and only a subset of ra_svn is implemented so far.
 | --- | --- |
 | `info` / `ls` / `cat` / `log` (including `log -v`) | ✅ |
 | `checkout` / `update` / `switch` | ❌ (not implemented yet) |
-| `commit` and any other write operation | ❌ (not planned: this is a read-only view of a Git repository) |
+| `commit` and any other write operation | ❌ (not implemented yet: needs commit support in `github.com/cespedes/svn` first) |
 
 `log -v`'s changed-paths list does not detect renames/copies: it comes from
 a plain Git tree diff with no rename detection, so a rename shows up as a

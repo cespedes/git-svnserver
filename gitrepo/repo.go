@@ -24,10 +24,10 @@ type Repo struct {
 }
 
 // FindRepo locates the Git repository that a client-supplied path refers
-// to, the same way a real svnserve locates a repository root when it isn't
-// jailed with "-r": it walks up from path looking for the first ancestor
-// directory that is a valid Git repository, the same way it would look for
-// an SVN repository. The returned subPath is whatever remainder of path
+// to: it walks up from path looking for the first ancestor directory that
+// is a valid Git repository, the same way a real svnserve (when it isn't
+// jailed with "-r") walks up looking for the first ancestor that is a
+// valid SVN repository. The returned subPath is whatever remainder of path
 // lies below that repository root (e.g. "trunk/sub"), which the caller
 // should use as a prefix for every subsequent request in the session.
 func FindRepo(path string) (repo *Repo, subPath string, err error) {

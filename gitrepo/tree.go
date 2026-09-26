@@ -209,8 +209,9 @@ func (r *Repo) CheckPath(path string, rev *uint) (string, error) {
 }
 
 // wirePath turns path (repo-root-relative, no leading slash; "" for the
-// root) into the full, slash-prefixed form svn.Server.List requires of
-// every Dirent.Path.
+// root) into the full, slash-prefixed form svn.Server expects for every
+// Dirent.Path (in a "list" response) and ChangedPath.Path (in a "log"
+// response with changed paths; see log.go).
 func wirePath(path string) string {
 	return "/" + path
 }
