@@ -24,6 +24,7 @@ write support yet (SVN clients see a read-only repository): that depends on
 | --- | --- |
 | `info` / `ls` / `cat` / `log` (including `log -v`) | ✅ |
 | `checkout` / `update`, of a whole connected repository or a subdirectory | ✅ |
+| `diff` of two repository revisions, or of a working copy against one, of a whole repository, a directory, or a single file (nested or not) | ✅ |
 | `update` against a "mixed-revision" working copy (part of it pinned to an older revision, e.g. via `svn update -r`) | ❌ (rejected with a clear error) |
 | `switch` | ❌ (not implemented yet) |
 | `commit` and any other write operation | ❌ (not implemented yet: needs commit support in `github.com/cespedes/svn` first) |

@@ -438,6 +438,76 @@ func TestCheckout(t *testing.T) {
 	})
 }
 
+// runSVNOn runs "svn" with args as-is (unlike runSVNAgainst, which builds
+// and appends a URL itself), tunneled the same way -- for commands like
+// "diff" that take a working-copy path rather than a URL.
+func runSVNOn(t *testing.T, bin string, args ...string) (string, error) {
+	t.Helper()
+	fullArgs := append([]string{
+		"--non-interactive",
+		"--config-option=config:tunnels:gitsvnservertest=" + bin,
+	}, args...)
+	out, err := exec.Command("svn", fullArgs...).CombinedOutput()
+	return string(out), err
+}
+
+func TestDiff(t *testing.T) {
+	requireTools(t)
+	bin := buildBinary(t)
+	repo := newTestRepo(t)
+	// r3: trunk/sub/nested.txt changed, so there's a nested file to diff
+	// too (neither newTestRepo commit touches it after r1).
+	writeFile(t, repo, "trunk/sub/nested.txt", "nested, v2\n")
+	runGit(t, repo, "commit", "-q", "-am", "update nested.txt")
+
+	t.Run("whole repository, repo-to-repo", func(t *testing.T) {
+		out, err := runSVNAgainst(t, bin, repo, "diff", "-r1:2")
+		if err != nil {
+			t.Fatalf("svn diff: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "Index: README.md") || !strings.Contains(out, "+hello world, v2") {
+			t.Errorf("diff output missing README.md's change:\n%s", out)
+		}
+	})
+
+	t.Run("a single flat file, repo-to-repo", func(t *testing.T) {
+		out, err := runSVNAgainst(t, bin, filepath.Join(repo, "README.md"), "diff", "-r1:2")
+		if err != nil {
+			t.Fatalf("svn diff: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "+hello world, v2") {
+			t.Errorf("diff output missing README.md's change:\n%s", out)
+		}
+	})
+
+	t.Run("a nested file, repo-to-repo", func(t *testing.T) {
+		// Regression test: UpdateEdit (which "diff" reuses under the
+		// hood, same as "update") used to assume its path argument was
+		// always the node being described; a plain file nested more
+		// than one level below the session's own anchor needs it
+		// described as a separate "target" instead, since the Editor
+		// Command Set has no way to open a node that isn't a directory.
+		out, err := runSVNAgainst(t, bin, filepath.Join(repo, "trunk", "sub", "nested.txt"), "diff", "-r1:3")
+		if err != nil {
+			t.Fatalf("svn diff: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "+nested, v2") {
+			t.Errorf("diff output missing nested.txt's change:\n%s", out)
+		}
+	})
+
+	t.Run("from a working copy, against an older revision", func(t *testing.T) {
+		wc := checkout(t, bin, repo)
+		out, err := runSVNOn(t, bin, "diff", "-r1", filepath.Join(wc, "trunk", "sub", "nested.txt"))
+		if err != nil {
+			t.Fatalf("svn diff: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "+nested, v2") {
+			t.Errorf("diff output missing nested.txt's change:\n%s", out)
+		}
+	})
+}
+
 func TestCat(t *testing.T) {
 	requireTools(t)
 	bin := buildBinary(t)

@@ -99,19 +99,36 @@ func run(in io.Reader, out io.Writer) error {
 		return repo.Log(paths, startRev, endRev, changedPaths)
 	}
 
-	// updateRev/updateTarget are filled in by Update, then read back by
-	// FinishReport once the report that follows it is done -- see
-	// FinishReport's own comment for why only these two report shapes
-	// are handled.
+	// updateRev/target/diffErr are filled in by Update or Diff, then read
+	// back by FinishReport once the report that follows it is done -- see
+	// FinishReport's own comment for why only these two report shapes are
+	// handled, and UpdateEdit's doc comment (in github.com/cespedes/svn)
+	// for why "update" and "diff" need to fill in target differently.
 	var updateRev *uint
-	var updateTarget string
+	var target string
+	var diffErr error
 
-	server.Update = func(rev *uint, target string, recurse bool) {
+	server.Update = func(rev *uint, t string, recurse bool) {
 		updateRev = rev
-		updateTarget = target
+		target = t
+		diffErr = nil
+	}
+
+	server.Diff = func(rev *uint, t string, recurse bool, ignoreAncestry bool, versusURL string, textDeltas bool, depth string) {
+		updateRev = rev
+		diffErr = nil
+		repoRelative, err := svn.RepoRelativePath(server.ReposInfo.URL, versusURL)
+		if err != nil {
+			diffErr = err
+			return
+		}
+		target = stripBase(sessionBase, repoRelative)
 	}
 
 	server.FinishReport = func(report []svn.ReportedPath) ([]svn.Item, error) {
+		if diffErr != nil {
+			return nil, diffErr
+		}
 		// A "mixed-revision" working copy (part of it pinned to an older
 		// revision than the rest, e.g. via "svn update -r") reports more
 		// than one entry, or a non-root one; svn.UpdateEdit only handles
@@ -124,18 +141,22 @@ func run(in io.Reader, out io.Writer) error {
 		if err != nil {
 			return nil, err
 		}
-		// path is session-anchor-relative, the same form server.List and
-		// server.GetFile's own reqPath parameter takes: CheckoutEdit and
+		// path is report[0].Path itself, unmodified: it's already in the
+		// same session-anchor-relative form server.List and
+		// server.GetFile's own reqPath parameter takes (CheckoutEdit and
 		// UpdateEdit call back into those closures internally, which
-		// already resolve it against sessionBase themselves (via
-		// withBase) -- doing that resolution again here, before calling
-		// them, would apply it twice.
-		path := withBase(updateTarget, report[0].Path)
+		// resolve it against sessionBase themselves), and, for
+		// UpdateEdit, path must always be a directory -- target (a
+		// separate argument, possibly a multi-segment path reaching a
+		// plain file) is how a single-file update/diff target is
+		// described instead, without treating the file itself as if it
+		// were the report's own root.
+		path := report[0].Path
 		if svn.IsPlainCheckout(report) {
 			return server.CheckoutEdit(path, rev)
 		}
 		if fromRev, ok := svn.IsSingleRevisionUpdate(report); ok {
-			return server.UpdateEdit(path, fromRev, rev)
+			return server.UpdateEdit(path, target, fromRev, rev)
 		}
 		return nil, errors.New("git-svnserver: only a plain checkout or a single-revision update of the whole working copy is supported")
 	}
@@ -181,4 +202,19 @@ func withBase(base, path string) string {
 	default:
 		return base + "/" + path
 	}
+}
+
+// stripBase is withBase's inverse: given full (a repository-root-relative
+// path) and base (the session's own base path), it returns full's own
+// remainder below base. Used for a "diff" command's versusURL, the one
+// path git-svnserver ever has in repository-root-relative form to begin
+// with (see svn.RepoRelativePath) rather than session-relative, unlike
+// every path a client sends directly.
+func stripBase(base, full string) string {
+	base = strings.Trim(base, "/")
+	full = strings.Trim(full, "/")
+	if base == "" {
+		return full
+	}
+	return strings.TrimPrefix(strings.TrimPrefix(full, base), "/")
 }
