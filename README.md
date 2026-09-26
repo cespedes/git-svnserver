@@ -23,7 +23,9 @@ write support yet (SVN clients see a read-only repository): that depends on
 | `svn` subcommand | Works? |
 | --- | --- |
 | `info` / `ls` / `cat` / `log` (including `log -v`) | ✅ |
-| `checkout` / `update` / `switch` | ❌ (not implemented yet) |
+| `checkout` / `update`, of a whole connected repository or a subdirectory | ✅ |
+| `update` against a "mixed-revision" working copy (part of it pinned to an older revision, e.g. via `svn update -r`) | ❌ (rejected with a clear error) |
+| `switch` | ❌ (not implemented yet) |
 | `commit` and any other write operation | ❌ (not implemented yet: needs commit support in `github.com/cespedes/svn` first) |
 
 `log -v`'s changed-paths list does not detect renames/copies: it comes from

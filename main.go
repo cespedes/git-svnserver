@@ -99,6 +99,47 @@ func run(in io.Reader, out io.Writer) error {
 		return repo.Log(paths, startRev, endRev, changedPaths)
 	}
 
+	// updateRev/updateTarget are filled in by Update, then read back by
+	// FinishReport once the report that follows it is done -- see
+	// FinishReport's own comment for why only these two report shapes
+	// are handled.
+	var updateRev *uint
+	var updateTarget string
+
+	server.Update = func(rev *uint, target string, recurse bool) {
+		updateRev = rev
+		updateTarget = target
+	}
+
+	server.FinishReport = func(report []svn.ReportedPath) ([]svn.Item, error) {
+		// A "mixed-revision" working copy (part of it pinned to an older
+		// revision than the rest, e.g. via "svn update -r") reports more
+		// than one entry, or a non-root one; svn.UpdateEdit only handles
+		// the common case of a client entirely at one revision, which
+		// (like a plain checkout) always reduces to exactly one entry.
+		if len(report) != 1 {
+			return nil, errors.New("git-svnserver: a mixed-revision working copy is not supported")
+		}
+		rev, err := repo.ResolveRev(updateRev)
+		if err != nil {
+			return nil, err
+		}
+		// path is session-anchor-relative, the same form server.List and
+		// server.GetFile's own reqPath parameter takes: CheckoutEdit and
+		// UpdateEdit call back into those closures internally, which
+		// already resolve it against sessionBase themselves (via
+		// withBase) -- doing that resolution again here, before calling
+		// them, would apply it twice.
+		path := withBase(updateTarget, report[0].Path)
+		if svn.IsPlainCheckout(report) {
+			return server.CheckoutEdit(path, rev)
+		}
+		if fromRev, ok := svn.IsSingleRevisionUpdate(report); ok {
+			return server.UpdateEdit(path, fromRev, rev)
+		}
+		return nil, errors.New("git-svnserver: only a plain checkout or a single-revision update of the whole working copy is supported")
+	}
+
 	return server.Serve(in, out)
 }
 

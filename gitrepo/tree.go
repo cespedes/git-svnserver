@@ -32,7 +32,7 @@ func kindFromMode(m filemode.FileMode) string {
 }
 
 // commitForRev returns the commit for a given revision. rev must be a
-// valid, non-zero revision number (see resolveRev).
+// valid, non-zero revision number (see ResolveRev).
 func (r *Repo) commitForRev(rev uint) (*object.Commit, error) {
 	if rev == 0 || rev > r.LatestRev() {
 		return nil, fmt.Errorf("gitrepo: no such revision %d", rev)
@@ -175,7 +175,7 @@ func (r *Repo) direntAt(path string, atRev uint, e treeEntry) (svn.Dirent, error
 // errors.Is(err, fs.ErrNotExist) if path does not exist at that revision.
 func (r *Repo) Stat(path string, rev *uint) (svn.Dirent, error) {
 	path = normalizePath(path)
-	resolved, err := r.resolveRev(rev)
+	resolved, err := r.ResolveRev(rev)
 	if err != nil {
 		return svn.Dirent{}, err
 	}
@@ -194,7 +194,7 @@ func (r *Repo) Stat(path string, rev *uint) (svn.Dirent, error) {
 // exist there.
 func (r *Repo) CheckPath(path string, rev *uint) (string, error) {
 	path = normalizePath(path)
-	resolved, err := r.resolveRev(rev)
+	resolved, err := r.ResolveRev(rev)
 	if err != nil {
 		return "", err
 	}
@@ -226,7 +226,7 @@ func wirePath(path string) string {
 // later.
 func (r *Repo) List(path string, rev *uint) ([]svn.Dirent, error) {
 	path = normalizePath(path)
-	resolved, err := r.resolveRev(rev)
+	resolved, err := r.ResolveRev(rev)
 	if err != nil {
 		return nil, err
 	}
@@ -293,7 +293,7 @@ func (r *Repo) List(path string, rev *uint) ([]svn.Dirent, error) {
 // errors.Is(err, fs.ErrNotExist) if path does not exist at that revision.
 func (r *Repo) GetFile(path string, rev *uint, wantContents bool) (uint, []byte, error) {
 	path = normalizePath(path)
-	resolved, err := r.resolveRev(rev)
+	resolved, err := r.ResolveRev(rev)
 	if err != nil {
 		return 0, nil, err
 	}

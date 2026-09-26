@@ -102,9 +102,9 @@ func (r *Repo) LatestRev() uint {
 	return uint(len(r.revmap.revs))
 }
 
-// resolveRev returns rev, or the latest revision if rev is nil, checking
+// ResolveRev returns rev, or the latest revision if rev is nil, checking
 // that it is a valid revision number for this repository either way.
-func (r *Repo) resolveRev(rev *uint) (uint, error) {
+func (r *Repo) ResolveRev(rev *uint) (uint, error) {
 	latest := r.LatestRev()
 	if rev == nil {
 		return latest, nil

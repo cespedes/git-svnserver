@@ -33,6 +33,33 @@ func buildBinary(t *testing.T) string {
 	return bin
 }
 
+// runGit runs a git command in dir, failing the test on error.
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=Tester", "GIT_AUTHOR_EMAIL=tester@example.com",
+		"GIT_COMMITTER_NAME=Tester", "GIT_COMMITTER_EMAIL=tester@example.com",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// writeFile writes name (creating any needed parent directories) under
+// dir, failing the test on error.
+func writeFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // newTestRepo creates a small Git repository with two commits:
 //
 //	r1: README.md, trunk/main.go, trunk/sub/nested.txt
@@ -40,38 +67,16 @@ func buildBinary(t *testing.T) string {
 func newTestRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	run := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=Tester", "GIT_AUTHOR_EMAIL=tester@example.com",
-			"GIT_COMMITTER_NAME=Tester", "GIT_COMMITTER_EMAIL=tester@example.com",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	write := func(name, content string) {
-		t.Helper()
-		p := filepath.Join(dir, name)
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
 
-	run("init", "-q", "-b", "main", ".")
-	write("README.md", "hello world\n")
-	write("trunk/main.go", "package main\n")
-	write("trunk/sub/nested.txt", "nested\n")
-	run("add", "README.md", "trunk")
-	run("commit", "-q", "-m", "initial commit")
+	runGit(t, dir, "init", "-q", "-b", "main", ".")
+	writeFile(t, dir, "README.md", "hello world\n")
+	writeFile(t, dir, "trunk/main.go", "package main\n")
+	writeFile(t, dir, "trunk/sub/nested.txt", "nested\n")
+	runGit(t, dir, "add", "README.md", "trunk")
+	runGit(t, dir, "commit", "-q", "-m", "initial commit")
 
-	write("README.md", "hello world, v2\n")
-	run("commit", "-q", "-am", "update README")
+	writeFile(t, dir, "README.md", "hello world, v2\n")
+	runGit(t, dir, "commit", "-q", "-am", "update README")
 
 	return dir
 }
@@ -286,6 +291,149 @@ func TestLog(t *testing.T) {
 			if !strings.Contains(out, want) {
 				t.Errorf("log -v -r1 output missing %q:\n%s", want, out)
 			}
+		}
+	})
+}
+
+// checkout runs "svn checkout" of repoPath into a fresh temporary
+// directory, tunneled the same way runSVNAgainst is, and returns that
+// directory.
+func checkout(t *testing.T, bin, repoPath string, args ...string) string {
+	t.Helper()
+	wc := t.TempDir()
+	url := "svn+gitsvnservertest://localhost" + repoPath
+	fullArgs := append([]string{
+		"checkout", "--non-interactive",
+		"--config-option=config:tunnels:gitsvnservertest=" + bin,
+	}, args...)
+	fullArgs = append(fullArgs, url, wc)
+	if out, err := exec.Command("svn", fullArgs...).CombinedOutput(); err != nil {
+		t.Fatalf("svn checkout: %v\n%s", err, out)
+	}
+	return wc
+}
+
+func TestCheckout(t *testing.T) {
+	requireTools(t)
+	bin := buildBinary(t)
+	repo := newTestRepo(t)
+
+	t.Run("full checkout at HEAD", func(t *testing.T) {
+		wc := checkout(t, bin, repo)
+		for name, want := range map[string]string{
+			"README.md":            "hello world, v2\n",
+			"trunk/main.go":        "package main\n",
+			"trunk/sub/nested.txt": "nested\n",
+		} {
+			got, err := os.ReadFile(filepath.Join(wc, name))
+			if err != nil {
+				t.Errorf("reading %s: %v", name, err)
+				continue
+			}
+			if string(got) != want {
+				t.Errorf("%s = %q, want %q", name, got, want)
+			}
+		}
+
+		out, err := exec.Command("svn", "status", wc).CombinedOutput()
+		if err != nil {
+			t.Fatalf("svn status: %v\n%s", err, out)
+		}
+		if len(out) != 0 {
+			t.Errorf("svn status on a fresh checkout should be clean, got:\n%s", out)
+		}
+	})
+
+	t.Run("checkout at an older revision", func(t *testing.T) {
+		wc := checkout(t, bin, repo, "-r1")
+		got, err := os.ReadFile(filepath.Join(wc, "README.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != "hello world\n" {
+			t.Errorf("README.md = %q, want r1's content %q", got, "hello world\n")
+		}
+	})
+
+	t.Run("checkout of a subdirectory", func(t *testing.T) {
+		// Regression test: main.go used to resolve the session's base
+		// path (here "trunk") against the repository root itself
+		// before calling svn.Server.CheckoutEdit, which then resolved
+		// it *again* internally (via its own List/GetFile calls, the
+		// same ones every other command already goes through) --
+		// ending up looking for "trunk/trunk" and failing every time
+		// the session wasn't anchored at the repository root.
+		wc := checkout(t, bin, filepath.Join(repo, "trunk"))
+		got, err := os.ReadFile(filepath.Join(wc, "main.go"))
+		if err != nil {
+			t.Fatalf("reading main.go: %v", err)
+		}
+		if string(got) != "package main\n" {
+			t.Errorf("main.go = %q, want %q", got, "package main\n")
+		}
+		if _, err := os.Stat(filepath.Join(wc, "sub", "nested.txt")); err != nil {
+			t.Errorf("sub/nested.txt missing from the checkout: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(wc, "README.md")); err == nil {
+			t.Error("README.md should not be part of a checkout of trunk alone")
+		}
+	})
+
+	t.Run("svn update applies real changes", func(t *testing.T) {
+		wc := checkout(t, bin, repo)
+
+		runGit(t, repo, "rm", "-q", "-r", "trunk/sub")
+		writeFile(t, repo, "README.md", "hello world, v3\n")
+		writeFile(t, repo, "newfile.txt", "brand new\n")
+		runGit(t, repo, "add", "README.md", "newfile.txt")
+		runGit(t, repo, "commit", "-q", "-am", "v3: drop trunk/sub, add newfile.txt")
+
+		cmd := exec.Command("svn", "update", "--non-interactive",
+			"--config-option=config:tunnels:gitsvnservertest="+bin, wc)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("svn update: %v\n%s", err, out)
+		}
+
+		got, err := os.ReadFile(filepath.Join(wc, "README.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != "hello world, v3\n" {
+			t.Errorf("README.md = %q, want %q", got, "hello world, v3\n")
+		}
+		if _, err := os.ReadFile(filepath.Join(wc, "newfile.txt")); err != nil {
+			t.Errorf("newfile.txt missing after update: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(wc, "trunk", "sub")); err == nil {
+			t.Error("trunk/sub should have been removed by the update")
+		}
+
+		out, err := exec.Command("svn", "status", wc).CombinedOutput()
+		if err != nil {
+			t.Fatalf("svn status: %v\n%s", err, out)
+		}
+		if len(out) != 0 {
+			t.Errorf("svn status after a clean update should be empty, got:\n%s", out)
+		}
+	})
+
+	t.Run("svn update on a subdirectory checkout", func(t *testing.T) {
+		wc := checkout(t, bin, filepath.Join(repo, "trunk"))
+
+		writeFile(t, repo, "trunk/main.go", "package main // v2\n")
+		runGit(t, repo, "commit", "-q", "-am", "v2: change trunk/main.go")
+
+		cmd := exec.Command("svn", "update", "--non-interactive",
+			"--config-option=config:tunnels:gitsvnservertest="+bin, wc)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("svn update: %v\n%s", err, out)
+		}
+		got, err := os.ReadFile(filepath.Join(wc, "main.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != "package main // v2\n" {
+			t.Errorf("main.go = %q, want %q", got, "package main // v2\n")
 		}
 	})
 }
