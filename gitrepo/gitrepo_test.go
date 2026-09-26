@@ -248,6 +248,141 @@ func TestCheckPath(t *testing.T) {
 	}
 }
 
+func TestList(t *testing.T) {
+	dir := newTestRepo(t)
+	r, _ := mustFindRepo(t, dir)
+
+	// direntsByPath runs List and indexes the result by its full,
+	// slash-prefixed Path, failing the test if any path appears twice.
+	direntsByPath := func(path string) map[string]uint {
+		t.Helper()
+		dirents, err := r.List(path, nil)
+		if err != nil {
+			t.Fatalf("List(%q): %v", path, err)
+		}
+		byPath := make(map[string]uint, len(dirents))
+		for _, d := range dirents {
+			if _, dup := byPath[d.Path]; dup {
+				t.Fatalf("List(%q): duplicate entry for %q", path, d.Path)
+			}
+			byPath[d.Path] = d.CreatedRev
+		}
+		return byPath
+	}
+
+	t.Run("root includes an entry for itself", func(t *testing.T) {
+		got := direntsByPath("")
+		// "/" itself stays at r1: its own direct entries (README.md,
+		// trunk) never change afterwards, even though r2 and r3 each
+		// change something nested inside one of them.
+		want := map[string]uint{"/": 1, "/README.md": 2, "/trunk": 1}
+		for path, wantRev := range want {
+			gotRev, ok := got[path]
+			if !ok {
+				t.Errorf("missing entry for %q (got: %v)", path, got)
+				continue
+			}
+			if gotRev != wantRev {
+				t.Errorf("CreatedRev for %q = %d, want %d", path, gotRev, wantRev)
+			}
+		}
+		if len(got) != len(want) {
+			t.Errorf("List(\"\") = %v, want exactly %v", got, want)
+		}
+	})
+
+	t.Run("subdirectory: full paths, not bare base names", func(t *testing.T) {
+		// This is the shape a real "svn ls" on a subdirectory needs: an
+		// earlier version of github.com/cespedes/svn's Server.List
+		// reconstructed paths from the query path instead of trusting
+		// these, and got it wrong for exactly this case (a segfault in
+		// a real svn client, confirmed against a real svnserve).
+		got := direntsByPath("trunk")
+		want := map[string]uint{"/trunk": 1, "/trunk/main.go": 3, "/trunk/sub": 1}
+		for path, wantRev := range want {
+			if gotRev, ok := got[path]; !ok {
+				t.Errorf("missing entry for %q (got: %v)", path, got)
+			} else if gotRev != wantRev {
+				t.Errorf("CreatedRev for %q = %d, want %d", path, gotRev, wantRev)
+			}
+		}
+		if len(got) != len(want) {
+			t.Errorf("List(\"trunk\") = %v, want exactly %v", got, want)
+		}
+	})
+
+	t.Run("on a file", func(t *testing.T) {
+		if _, err := r.List("README.md", nil); err == nil {
+			t.Error("List(\"README.md\"): want an error, README.md is not a directory")
+		}
+	})
+
+	t.Run("nonexistent path", func(t *testing.T) {
+		_, err := r.List("does-not-exist", nil)
+		if !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("error = %v, want errors.Is(err, fs.ErrNotExist)", err)
+		}
+	})
+}
+
+func TestGetFile(t *testing.T) {
+	dir := newTestRepo(t)
+	r, _ := mustFindRepo(t, dir)
+
+	t.Run("content and created-rev at the latest revision", func(t *testing.T) {
+		createdRev, content, err := r.GetFile("README.md", nil, true)
+		if err != nil {
+			t.Fatalf("GetFile: %v", err)
+		}
+		if string(content) != "hello, v2\n" {
+			t.Errorf("content = %q, want %q", content, "hello, v2\n")
+		}
+		if createdRev != 2 {
+			t.Errorf("createdRev = %d, want 2", createdRev)
+		}
+	})
+
+	t.Run("content at an older revision", func(t *testing.T) {
+		one := uint(1)
+		createdRev, content, err := r.GetFile("README.md", &one, true)
+		if err != nil {
+			t.Fatalf("GetFile: %v", err)
+		}
+		if string(content) != "hello\n" {
+			t.Errorf("content = %q, want %q", content, "hello\n")
+		}
+		if createdRev != 1 {
+			t.Errorf("createdRev = %d, want 1", createdRev)
+		}
+	})
+
+	t.Run("without contents", func(t *testing.T) {
+		createdRev, content, err := r.GetFile("README.md", nil, false)
+		if err != nil {
+			t.Fatalf("GetFile: %v", err)
+		}
+		if content != nil {
+			t.Errorf("content = %q, want nil (wantContents was false)", content)
+		}
+		if createdRev != 2 {
+			t.Errorf("createdRev = %d, want 2", createdRev)
+		}
+	})
+
+	t.Run("on a directory", func(t *testing.T) {
+		if _, _, err := r.GetFile("trunk", nil, true); err == nil {
+			t.Error("GetFile(\"trunk\"): want an error, trunk is a directory")
+		}
+	})
+
+	t.Run("nonexistent path", func(t *testing.T) {
+		_, _, err := r.GetFile("does-not-exist", nil, true)
+		if !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("error = %v, want errors.Is(err, fs.ErrNotExist)", err)
+		}
+	})
+}
+
 func TestRevMapPersistsAndIsStableAcrossOpens(t *testing.T) {
 	dir := newTestRepo(t)
 	mustFindRepo(t, dir)

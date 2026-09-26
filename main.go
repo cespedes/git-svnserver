@@ -13,6 +13,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"path"
 	"strings"
 
 	"github.com/cespedes/svn"
@@ -74,7 +75,43 @@ func run(in io.Reader, out io.Writer) error {
 		return repo.CheckPath(withBase(sessionBase, path), rev)
 	}
 
+	server.List = func(reqPath string, rev *uint, depth string, fields []string, pattern []string) ([]svn.Dirent, error) {
+		dirents, err := repo.List(withBase(sessionBase, reqPath), rev)
+		if err != nil {
+			return nil, err
+		}
+		return filterByPattern(dirents, pattern), nil
+	}
+
+	server.GetFile = func(reqPath string, rev *uint, wantProps bool, wantContents bool) (uint, []svn.PropList, []byte, error) {
+		createdRev, content, err := repo.GetFile(withBase(sessionBase, reqPath), rev, wantContents)
+		if err != nil {
+			return 0, nil, nil, err
+		}
+		return createdRev, nil, content, nil
+	}
+
 	return server.Serve(in, out)
+}
+
+// filterByPattern keeps only the entries whose base name matches at least
+// one of the given glob patterns, or all of them if pattern is empty. The
+// queried directory's own entry (dirents[0]; see gitrepo.Repo.List) is
+// always kept, matching a real svnserve.
+func filterByPattern(dirents []svn.Dirent, pattern []string) []svn.Dirent {
+	if len(pattern) == 0 || len(dirents) == 0 {
+		return dirents
+	}
+	kept := dirents[:1]
+	for _, d := range dirents[1:] {
+		for _, p := range pattern {
+			if ok, _ := path.Match(p, path.Base(d.Path)); ok {
+				kept = append(kept, d)
+				break
+			}
+		}
+	}
+	return kept
 }
 
 // withBase resolves an SVN path from the client against the session's base

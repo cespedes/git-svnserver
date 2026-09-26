@@ -35,7 +35,7 @@ func buildBinary(t *testing.T) string {
 
 // newTestRepo creates a small Git repository with two commits:
 //
-//	r1: README.md, trunk/main.go
+//	r1: README.md, trunk/main.go, trunk/sub/nested.txt
 //	r2: README.md changed
 func newTestRepo(t *testing.T) string {
 	t.Helper()
@@ -66,6 +66,7 @@ func newTestRepo(t *testing.T) string {
 	run("init", "-q", "-b", "main", ".")
 	write("README.md", "hello world\n")
 	write("trunk/main.go", "package main\n")
+	write("trunk/sub/nested.txt", "nested\n")
 	run("add", "README.md", "trunk")
 	run("commit", "-q", "-m", "initial commit")
 
@@ -174,6 +175,85 @@ func TestInfo(t *testing.T) {
 		}
 		if string(before) != string(after) {
 			t.Errorf("revision map changed with no new commits:\nbefore: %q\nafter:  %q", before, after)
+		}
+	})
+}
+
+func TestLs(t *testing.T) {
+	requireTools(t)
+	bin := buildBinary(t)
+	repo := newTestRepo(t)
+
+	t.Run("root", func(t *testing.T) {
+		out, err := runSVNAgainst(t, bin, repo, "ls")
+		if err != nil {
+			t.Fatalf("svn ls: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "README.md") || !strings.Contains(out, "trunk/") {
+			t.Errorf("ls output missing expected entries:\n%s", out)
+		}
+	})
+
+	t.Run("subdirectory", func(t *testing.T) {
+		// This is the exact shape that used to crash a real svn client:
+		// an earlier version of github.com/cespedes/svn reconstructed
+		// each entry's wire path from the query path instead of trusting
+		// the one the server callback gave it, which came out wrong (and
+		// so triggered a segfault) whenever the client's session was
+		// anchored below the repository root, as it is here.
+		out, err := runSVNAgainst(t, bin, filepath.Join(repo, "trunk"), "ls")
+		if err != nil {
+			t.Fatalf("svn ls trunk: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "main.go") || !strings.Contains(out, "sub/") {
+			t.Errorf("ls trunk output missing expected entries:\n%s", out)
+		}
+	})
+
+	t.Run("nested subdirectory", func(t *testing.T) {
+		out, err := runSVNAgainst(t, bin, filepath.Join(repo, "trunk", "sub"), "ls")
+		if err != nil {
+			t.Fatalf("svn ls trunk/sub: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "nested.txt") {
+			t.Errorf("ls trunk/sub output missing nested.txt:\n%s", out)
+		}
+	})
+
+	t.Run("on a file", func(t *testing.T) {
+		out, err := runSVNAgainst(t, bin, filepath.Join(repo, "README.md"), "ls")
+		if err == nil {
+			t.Fatalf("svn ls on a file should fail:\n%s", out)
+		}
+	})
+}
+
+func TestCat(t *testing.T) {
+	requireTools(t)
+	bin := buildBinary(t)
+	repo := newTestRepo(t)
+
+	t.Run("latest revision", func(t *testing.T) {
+		out, err := runSVNAgainst(t, bin, filepath.Join(repo, "README.md"), "cat")
+		if err != nil {
+			t.Fatalf("svn cat: %v\n%s", err, out)
+		}
+		if out != "hello world, v2\n" {
+			t.Errorf("cat output = %q, want %q", out, "hello world, v2\n")
+		}
+	})
+
+	t.Run("on a directory", func(t *testing.T) {
+		out, err := runSVNAgainst(t, bin, filepath.Join(repo, "trunk"), "cat")
+		if err == nil {
+			t.Fatalf("svn cat on a directory should fail:\n%s", out)
+		}
+	})
+
+	t.Run("nonexistent path", func(t *testing.T) {
+		out, err := runSVNAgainst(t, bin, filepath.Join(repo, "does-not-exist"), "cat")
+		if err == nil {
+			t.Fatalf("svn cat on a nonexistent path should fail:\n%s", out)
 		}
 	})
 }
