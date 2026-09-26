@@ -91,6 +91,14 @@ func run(in io.Reader, out io.Writer) error {
 		return createdRev, nil, content, nil
 	}
 
+	server.Log = func(reqPaths []string, startRev uint, endRev uint, changedPaths bool) ([]svn.LogEntry, error) {
+		paths := make([]string, len(reqPaths))
+		for i, p := range reqPaths {
+			paths[i] = withBase(sessionBase, p)
+		}
+		return repo.Log(paths, startRev, endRev, changedPaths)
+	}
+
 	return server.Serve(in, out)
 }
 

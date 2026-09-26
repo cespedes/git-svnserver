@@ -21,10 +21,14 @@ and only a subset of ra_svn is implemented so far.
 
 | `svn` subcommand | Works? |
 | --- | --- |
-| `info` | ✅ |
-| `ls` / `cat` / `log` | ❌ (not implemented yet) |
+| `info` / `ls` / `cat` / `log` (including `log -v`) | ✅ |
 | `checkout` / `update` / `switch` | ❌ (not implemented yet) |
 | `commit` and any other write operation | ❌ (not planned: this is a read-only view of a Git repository) |
+
+`log -v`'s changed-paths list does not detect renames/copies: it comes from
+a plain Git tree diff with no rename detection, so a rename shows up as a
+delete plus an add on two different paths, rather than a single "copied
+from" entry.
 
 ## How revisions map to commits
 

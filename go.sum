@@ -9,8 +9,8 @@ github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be h1:9AeTilPcZAjCFI
 github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be/go.mod h1:ySMOLuWl6zY27l47sB3qLNK6tF2fkHG55UZxx8oIVo4=
 github.com/armon/go-socks5 v0.0.0-20160902184237-e75332964ef5 h1:0CwZNZbxp69SHPdPJAN/hZIm0C4OItdklCFmMRWYpio=
 github.com/armon/go-socks5 v0.0.0-20160902184237-e75332964ef5/go.mod h1:wHh0iHkYZB8zMSxRWpUBQtwG5a7fFgvEO+odwuTv2gs=
-github.com/cespedes/svn v0.1.4 h1:deja2QB62rhFb5zKBBpq3np7FJaGdwMvmHuLyOuRMAg=
-github.com/cespedes/svn v0.1.4/go.mod h1:8YZ3Sk4PN28D+I6TLaulUl07ONpM8iV3Ckq8y3CPMuE=
+github.com/cespedes/svn v0.1.5 h1:QAfPQfaKTAvNVbNe92wJnP6r6zD/LYk4SimnZaLKd5c=
+github.com/cespedes/svn v0.1.5/go.mod h1:8YZ3Sk4PN28D+I6TLaulUl07ONpM8iV3Ckq8y3CPMuE=
 github.com/cloudflare/circl v1.6.3 h1:9GPOhQGF9MCYUeXyMYlqTR6a5gTrgR/fBLXvUgtVcg8=
 github.com/cloudflare/circl v1.6.3/go.mod h1:2eXP6Qfat4O/Yhh8BznvKnJ+uzEoTQ6jVKJRn81BiS4=
 github.com/cyphar/filepath-securejoin v0.6.1 h1:5CeZ1jPXEiYt3+Z6zqprSAgSWiggmpVyciv8syjIpVE=

@@ -228,6 +228,68 @@ func TestLs(t *testing.T) {
 	})
 }
 
+func TestLog(t *testing.T) {
+	requireTools(t)
+	bin := buildBinary(t)
+	repo := newTestRepo(t)
+
+	t.Run("plain log, newest first", func(t *testing.T) {
+		out, err := runSVNAgainst(t, bin, repo, "log")
+		if err != nil {
+			t.Fatalf("svn log: %v\n%s", err, out)
+		}
+		iInitial := strings.Index(out, "initial commit")
+		iUpdate := strings.Index(out, "update README")
+		if iInitial < 0 || iUpdate < 0 {
+			t.Fatalf("log output missing expected messages:\n%s", out)
+		}
+		if iUpdate > iInitial {
+			t.Errorf("log should list r2 (update README) before r1 (initial commit):\n%s", out)
+		}
+		if !strings.Contains(out, "Tester") {
+			t.Errorf("log output missing author:\n%s", out)
+		}
+	})
+
+	t.Run("revision range", func(t *testing.T) {
+		out, err := runSVNAgainst(t, bin, repo, "log", "-r1:1")
+		if err != nil {
+			t.Fatalf("svn log -r1:1: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "initial commit") {
+			t.Errorf("log -r1:1 output missing r1's message:\n%s", out)
+		}
+		if strings.Contains(out, "update README") {
+			t.Errorf("log -r1:1 should not include r2:\n%s", out)
+		}
+	})
+
+	t.Run("path filtering", func(t *testing.T) {
+		out, err := runSVNAgainst(t, bin, filepath.Join(repo, "trunk"), "log")
+		if err != nil {
+			t.Fatalf("svn log trunk: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "initial commit") {
+			t.Errorf("log trunk output missing r1's message:\n%s", out)
+		}
+		if strings.Contains(out, "update README") {
+			t.Errorf("log trunk should not include r2 (only README.md changed):\n%s", out)
+		}
+	})
+
+	t.Run("verbose: changed paths", func(t *testing.T) {
+		out, err := runSVNAgainst(t, bin, repo, "log", "-v", "-r1")
+		if err != nil {
+			t.Fatalf("svn log -v -r1: %v\n%s", err, out)
+		}
+		for _, want := range []string{"A /README.md", "A /trunk", "A /trunk/main.go", "A /trunk/sub", "A /trunk/sub/nested.txt"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("log -v -r1 output missing %q:\n%s", want, out)
+			}
+		}
+	})
+}
+
 func TestCat(t *testing.T) {
 	requireTools(t)
 	bin := buildBinary(t)

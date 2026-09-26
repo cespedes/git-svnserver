@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cespedes/svn"
+
 	"github.com/cespedes/git-svnserver/gitrepo"
 )
 
@@ -379,6 +381,142 @@ func TestGetFile(t *testing.T) {
 		_, _, err := r.GetFile("does-not-exist", nil, true)
 		if !errors.Is(err, fs.ErrNotExist) {
 			t.Errorf("error = %v, want errors.Is(err, fs.ErrNotExist)", err)
+		}
+	})
+}
+
+func TestLog(t *testing.T) {
+	dir := newTestRepo(t)
+	r, _ := mustFindRepo(t, dir)
+
+	revs := func(entries []svn.LogEntry) []uint {
+		out := make([]uint, len(entries))
+		for i, e := range entries {
+			out[i] = e.Rev
+		}
+		return out
+	}
+	eq := func(t *testing.T, got, want []uint) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+		for i := range got {
+			if got[i] != want[i] {
+				t.Fatalf("got %v, want %v", got, want)
+			}
+		}
+	}
+
+	t.Run("startRev 0 means the latest revision, descending order", func(t *testing.T) {
+		entries, err := r.Log(nil, 0, 0, false)
+		if err != nil {
+			t.Fatalf("Log: %v", err)
+		}
+		eq(t, revs(entries), []uint{3, 2, 1})
+		if entries[0].Message != "flesh out main.go" {
+			t.Errorf("r3 message = %q, want %q", entries[0].Message, "flesh out main.go")
+		}
+		if entries[0].Author != "Tester" {
+			t.Errorf("r3 author = %q, want %q", entries[0].Author, "Tester")
+		}
+		if entries[0].Changed != nil {
+			t.Errorf("Changed = %v, want nil (changedPaths was false)", entries[0].Changed)
+		}
+	})
+
+	t.Run("ascending when startRev < endRev", func(t *testing.T) {
+		entries, err := r.Log(nil, 1, 2, false)
+		if err != nil {
+			t.Fatalf("Log: %v", err)
+		}
+		eq(t, revs(entries), []uint{1, 2})
+	})
+
+	t.Run("descending when startRev > endRev", func(t *testing.T) {
+		entries, err := r.Log(nil, 2, 1, false)
+		if err != nil {
+			t.Fatalf("Log: %v", err)
+		}
+		eq(t, revs(entries), []uint{2, 1})
+	})
+
+	t.Run("filtered to revisions that touched a file", func(t *testing.T) {
+		entries, err := r.Log([]string{"README.md"}, 3, 0, false)
+		if err != nil {
+			t.Fatalf("Log: %v", err)
+		}
+		eq(t, revs(entries), []uint{2, 1})
+	})
+
+	t.Run("filtered to revisions that touched anything under a directory", func(t *testing.T) {
+		entries, err := r.Log([]string{"trunk"}, 3, 0, false)
+		if err != nil {
+			t.Fatalf("Log: %v", err)
+		}
+		// r2 only changed README.md, not anything under trunk.
+		eq(t, revs(entries), []uint{3, 1})
+	})
+
+	t.Run("changed paths", func(t *testing.T) {
+		entries, err := r.Log(nil, 3, 0, true)
+		if err != nil {
+			t.Fatalf("Log: %v", err)
+		}
+		byRev := map[uint][]svn.ChangedPath{}
+		for _, e := range entries {
+			byRev[e.Rev] = e.Changed
+		}
+
+		changedPaths := func(cs []svn.ChangedPath) map[string]string {
+			m := make(map[string]string, len(cs))
+			for _, c := range cs {
+				m[c.Path] = c.Mode
+			}
+			return m
+		}
+
+		t.Run("r1 also reports the directories it created", func(t *testing.T) {
+			got := changedPaths(byRev[1])
+			want := map[string]string{
+				"/README.md": "A", "/trunk": "A", "/trunk/main.go": "A",
+				"/trunk/sub": "A", "/trunk/sub/nested.txt": "A",
+			}
+			if len(got) != len(want) {
+				t.Fatalf("Changed = %v, want %v", got, want)
+			}
+			for path, mode := range want {
+				if got[path] != mode {
+					t.Errorf("Changed[%q] = %q, want %q", path, got[path], mode)
+				}
+			}
+		})
+
+		t.Run("r2 only touches README.md, no directories", func(t *testing.T) {
+			got := changedPaths(byRev[2])
+			want := map[string]string{"/README.md": "M"}
+			if len(got) != len(want) || got["/README.md"] != "M" {
+				t.Errorf("Changed = %v, want %v", got, want)
+			}
+		})
+
+		t.Run("r3 only touches trunk/main.go, trunk already existed", func(t *testing.T) {
+			got := changedPaths(byRev[3])
+			want := map[string]string{"/trunk/main.go": "M"}
+			if len(got) != len(want) || got["/trunk/main.go"] != "M" {
+				t.Errorf("Changed = %v, want %v", got, want)
+			}
+		})
+
+		first := byRev[1][0]
+		if first.Info == nil || first.Info.NodeKind == "" {
+			t.Errorf("Changed[0].Info = %v, want a populated NodeKind", first.Info)
+		}
+	})
+
+	t.Run("out of range revision", func(t *testing.T) {
+		if _, err := r.Log(nil, 100, 0, false); err == nil {
+			t.Error("Log with startRev beyond the latest revision: want an error")
 		}
 	})
 }
