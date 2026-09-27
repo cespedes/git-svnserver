@@ -39,7 +39,11 @@ func main() {
 func run(in io.Reader, out io.Writer) error {
 	// repo and sessionBase are filled in by Greet, once the client tells
 	// us which path it wants; every other callback is only ever invoked
-	// after that has happened.
+	// after that has happened. sessionBase changes over the connection's
+	// lifetime if the client reparents it (see Reparent) -- which, for a
+	// "switch", it does back to the working copy's own current location
+	// before sending the report describing what it already has there
+	// (confirmed by a real client: see FinishReport).
 	var repo *gitrepo.Repo
 	var sessionBase string
 
@@ -61,6 +65,15 @@ func run(in io.Reader, out io.Writer) error {
 			URL:          root.String(),
 			Capabilities: []string{},
 		}, nil
+	}
+
+	server.Reparent = func(reparentURL string) error {
+		newBase, err := svn.RepoRelativePath(server.ReposInfo.URL, reparentURL)
+		if err != nil {
+			return err
+		}
+		sessionBase = newBase
+		return nil
 	}
 
 	server.GetLatestRev = func() (int, error) {
@@ -99,24 +112,37 @@ func run(in io.Reader, out io.Writer) error {
 		return repo.Log(paths, startRev, endRev, changedPaths)
 	}
 
-	// updateRev/target/diffErr are filled in by Update or Diff, then read
-	// back by FinishReport once the report that follows it is done -- see
-	// FinishReport's own comment for why only these two report shapes are
-	// handled, and UpdateEdit's doc comment (in github.com/cespedes/svn)
-	// for why "update" and "diff" need to fill in target differently.
+	// updateRev/target/diffErr are filled in by Update, Diff or Switch,
+	// then read back by FinishReport once the report that follows it is
+	// done -- see FinishReport's own comment for why only these report
+	// shapes are handled, and UpdateEdit's doc comment (in
+	// github.com/cespedes/svn) for why "update"/"diff"/"switch" need to
+	// fill in target differently. isSwitch and switchToRepoPath are
+	// filled in by Switch alone: unlike Update/Diff (which both describe
+	// path at two revisions), a switch describes two potentially
+	// different repository-root-relative locations (switchToRepoPath,
+	// and connectBase+report[0].Path for where the working copy already
+	// is) at two revisions -- so FinishReport resolves both itself, in
+	// repository-root-relative terms, rather than through the usual
+	// sessionBase-relative path server.List/server.GetFile expect from
+	// every other command.
 	var updateRev *uint
 	var target string
 	var diffErr error
+	var isSwitch bool
+	var switchToRepoPath string
 
 	server.Update = func(rev *uint, t string, recurse bool) {
 		updateRev = rev
 		target = t
 		diffErr = nil
+		isSwitch = false
 	}
 
 	server.Diff = func(rev *uint, t string, recurse bool, ignoreAncestry bool, versusURL string, textDeltas bool, depth string) {
 		updateRev = rev
 		diffErr = nil
+		isSwitch = false
 		repoRelative, err := svn.RepoRelativePath(server.ReposInfo.URL, versusURL)
 		if err != nil {
 			diffErr = err
@@ -125,15 +151,29 @@ func run(in io.Reader, out io.Writer) error {
 		target = stripBase(sessionBase, repoRelative)
 	}
 
+	server.Switch = func(rev *uint, t string, recurse bool, switchURL string, depth string, sendCopyfromArgs bool, ignoreAncestry bool) {
+		updateRev = rev
+		target = t
+		diffErr = nil
+		isSwitch = true
+		repoRelative, err := svn.RepoRelativePath(server.ReposInfo.URL, switchURL)
+		if err != nil {
+			diffErr = err
+			return
+		}
+		switchToRepoPath = repoRelative
+	}
+
 	server.FinishReport = func(report []svn.ReportedPath) ([]svn.Item, error) {
 		if diffErr != nil {
 			return nil, diffErr
 		}
 		// A "mixed-revision" working copy (part of it pinned to an older
 		// revision than the rest, e.g. via "svn update -r") reports more
-		// than one entry, or a non-root one; svn.UpdateEdit only handles
-		// the common case of a client entirely at one revision, which
-		// (like a plain checkout) always reduces to exactly one entry.
+		// than one entry, or a non-root one; svn.UpdateEdit/SwitchEdit
+		// only handle the common case of a client entirely at one
+		// revision, which (like a plain checkout) always reduces to
+		// exactly one entry.
 		if len(report) != 1 {
 			return nil, errors.New("git-svnserver: a mixed-revision working copy is not supported")
 		}
@@ -141,24 +181,45 @@ func run(in io.Reader, out io.Writer) error {
 		if err != nil {
 			return nil, err
 		}
-		// path is report[0].Path itself, unmodified: it's already in the
-		// same session-anchor-relative form server.List and
-		// server.GetFile's own reqPath parameter takes (CheckoutEdit and
-		// UpdateEdit call back into those closures internally, which
-		// resolve it against sessionBase themselves), and, for
-		// UpdateEdit, path must always be a directory -- target (a
-		// separate argument, possibly a multi-segment path reaching a
-		// plain file) is how a single-file update/diff target is
-		// described instead, without treating the file itself as if it
-		// were the report's own root.
-		path := report[0].Path
 		if svn.IsPlainCheckout(report) {
-			return server.CheckoutEdit(path, rev)
+			// path is report[0].Path itself, unmodified: it's already in
+			// the same session-anchor-relative form server.List and
+			// server.GetFile's own reqPath parameter takes (CheckoutEdit
+			// calls back into those closures internally, which resolve
+			// it against sessionBase themselves).
+			return server.CheckoutEdit(report[0].Path, rev)
 		}
-		if fromRev, ok := svn.IsSingleRevisionUpdate(report); ok {
-			return server.UpdateEdit(path, target, fromRev, rev)
+		fromRev, ok := svn.IsSingleRevisionUpdate(report)
+		if !ok {
+			return nil, errors.New("git-svnserver: only a plain checkout or a single-revision update of the whole working copy is supported")
 		}
-		return nil, errors.New("git-svnserver: only a plain checkout or a single-revision update of the whole working copy is supported")
+		if !isSwitch {
+			// target, for UpdateEdit, is a separate argument (possibly a
+			// multi-segment path reaching a plain file) for a
+			// single-file update/diff target, without treating the file
+			// itself as if it were the report's own root; path must
+			// always be a directory.
+			return server.UpdateEdit(report[0].Path, target, fromRev, rev)
+		}
+		// SwitchEdit diffs two repository-root-relative locations
+		// directly, rather than one session-relative path at two
+		// revisions: sessionBase, by now reparented back to the working
+		// copy's own current (pre-switch) location (see the field doc
+		// comment above), resolves the "from" side exactly like
+		// UpdateEdit's path does; switchToRepoPath (already
+		// repository-root-relative, from Switch's own url argument) is
+		// the "to" side. Since both are being resolved here instead of
+		// through server.List/server.GetFile's usual sessionBase-relative
+		// resolution (which only ever has one anchor, not two),
+		// sessionBase is neutralized for the call itself, so it doesn't
+		// also apply on top of paths that are already
+		// repository-root-relative.
+		fromRepoPath := withBase(sessionBase, report[0].Path)
+		savedBase := sessionBase
+		sessionBase = ""
+		items, err := server.SwitchEdit(fromRepoPath, switchToRepoPath, target, fromRev, rev)
+		sessionBase = savedBase
+		return items, err
 	}
 
 	return server.Serve(in, out)

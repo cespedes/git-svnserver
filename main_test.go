@@ -488,6 +488,81 @@ func runSVNOn(t *testing.T, bin string, args ...string) (string, error) {
 	return string(out), err
 }
 
+func TestSwitch(t *testing.T) {
+	requireTools(t)
+	bin := buildBinary(t)
+	repo := t.TempDir()
+
+	runGit(t, repo, "init", "-q", "-b", "main", ".")
+	// main.go and common.txt exist on both sides from r1 on, so they
+	// share a CreatedRev -- this is a regression test for a bug where a
+	// file was skipped as "unchanged" between two different switch
+	// locations whenever it happened to share its CreatedRev with its
+	// counterpart, even though its actual content differed.
+	writeFile(t, repo, "trunk/main.go", "trunk main\n")
+	writeFile(t, repo, "trunk/common.txt", "common trunk\n")
+	writeFile(t, repo, "branches/foo/main.go", "foo main\n")
+	writeFile(t, repo, "branches/foo/common.txt", "common foo\n")
+	runGit(t, repo, "add", "trunk", "branches")
+	runGit(t, repo, "commit", "-q", "-m", "r1: trunk and branches/foo")
+	// r2: a file that only exists on each side, to also exercise add/delete.
+	writeFile(t, repo, "trunk/trunk-only.txt", "only in trunk\n")
+	writeFile(t, repo, "branches/foo/foo-only.txt", "only in foo\n")
+	runGit(t, repo, "add", "-A")
+	runGit(t, repo, "commit", "-q", "-m", "r2: divergent files")
+
+	trunkURL := "svn+gitsvnservertest://localhost" + filepath.Join(repo, "trunk")
+	fooURL := "svn+gitsvnservertest://localhost" + filepath.Join(repo, "branches", "foo")
+
+	checkContent := func(t *testing.T, wc string, want map[string]string, absent []string) {
+		t.Helper()
+		for name, content := range want {
+			got, err := os.ReadFile(filepath.Join(wc, name))
+			if err != nil {
+				t.Errorf("reading %s: %v", name, err)
+				continue
+			}
+			if string(got) != content {
+				t.Errorf("%s = %q, want %q", name, got, content)
+			}
+		}
+		for _, name := range absent {
+			if _, err := os.Stat(filepath.Join(wc, name)); err == nil {
+				t.Errorf("%s should not exist", name)
+			}
+		}
+		out, err := exec.Command("svn", "status", wc).CombinedOutput()
+		if err != nil {
+			t.Fatalf("svn status: %v\n%s", err, out)
+		}
+		if len(out) != 0 {
+			t.Errorf("svn status after switch should be clean, got:\n%s", out)
+		}
+	}
+
+	wc := checkout(t, bin, filepath.Join(repo, "trunk"))
+
+	t.Run("switch to branches/foo", func(t *testing.T) {
+		out, err := runSVNOn(t, bin, "switch", "--ignore-ancestry", fooURL, wc)
+		if err != nil {
+			t.Fatalf("svn switch: %v\n%s", err, out)
+		}
+		checkContent(t, wc,
+			map[string]string{"main.go": "foo main\n", "common.txt": "common foo\n", "foo-only.txt": "only in foo\n"},
+			[]string{"trunk-only.txt"})
+	})
+
+	t.Run("switch back to trunk", func(t *testing.T) {
+		out, err := runSVNOn(t, bin, "switch", "--ignore-ancestry", trunkURL, wc)
+		if err != nil {
+			t.Fatalf("svn switch: %v\n%s", err, out)
+		}
+		checkContent(t, wc,
+			map[string]string{"main.go": "trunk main\n", "common.txt": "common trunk\n", "trunk-only.txt": "only in trunk\n"},
+			[]string{"foo-only.txt"})
+	})
+}
+
 func TestDiff(t *testing.T) {
 	requireTools(t)
 	bin := buildBinary(t)

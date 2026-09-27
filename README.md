@@ -25,14 +25,17 @@ write support yet (SVN clients see a read-only repository): that depends on
 | `info` / `ls` / `cat` / `log` (including `log -v`) | ✅ |
 | `checkout` / `update`, of a whole connected repository or a subdirectory | ✅ |
 | `diff` of two repository revisions, or of a working copy against one, of a whole repository, a directory, or a single file (nested or not) | ✅ |
-| `update` against a "mixed-revision" working copy (part of it pinned to an older revision, e.g. via `svn update -r`) | ❌ (rejected with a clear error) |
-| `switch` | ❌ (not implemented yet) |
+| `switch`, between two repository locations that don't share any recorded copy history (e.g. `trunk` and `branches/foo`, added independently) -- needs `--ignore-ancestry` for that reason | ✅ |
+| `update`/`switch` against a "mixed-revision" working copy (part of it pinned to an older revision, e.g. via `svn update -r`) | ❌ (rejected with a clear error) |
 | `commit` and any other write operation | ❌ (not implemented yet: needs commit support in `github.com/cespedes/svn` first) |
 
 `log -v`'s changed-paths list does not detect renames/copies: it comes from
 a plain Git tree diff with no rename detection, so a rename shows up as a
 delete plus an add on two different paths, rather than a single "copied
-from" entry.
+from" entry. For the same reason, `svn switch` between two locations always
+needs `--ignore-ancestry`: a real `svn` client otherwise refuses to switch
+unless the destination is recorded as a copy of (or otherwise historically
+related to) the source, which nothing here ever reports.
 
 ## How revisions map to commits
 
