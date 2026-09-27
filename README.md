@@ -60,7 +60,11 @@ looking for the first ancestor directory that is a valid Git repository,
 the same way a real `svnserve` looks for the first ancestor that is a
 valid SVN repository; anything below that root (e.g. `trunk/sub` in
 `svn+ssh://host/home/user/repo/trunk/sub`) is treated as a path inside the
-repository, not as part of locating it.
+repository, not as part of locating it. At each ancestor, a `.git`-suffixed
+version of that same directory (e.g. `repo.git` alongside `repo`) is also
+tried, since a bare repository's directory conventionally has that suffix
+on disk, but spelling it out in every SVN URL would be an odd, very
+un-SVN-like thing to force on every client.
 
 ## Usage
 

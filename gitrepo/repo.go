@@ -27,25 +27,32 @@ type Repo struct {
 // to: it walks up from path looking for the first ancestor directory that
 // is a valid Git repository, the same way a real svnserve (when it isn't
 // jailed with "-r") walks up looking for the first ancestor that is a
-// valid SVN repository. The returned subPath is whatever remainder of path
-// lies below that repository root (e.g. "trunk/sub"), which the caller
-// should use as a prefix for every subsequent request in the session.
+// valid SVN repository. At each ancestor, it also tries that same
+// directory with ".git" appended (e.g. "myrepo" alongside "myrepo.git"),
+// since a bare repository's directory conventionally has that suffix on
+// disk, but spelling it out in every SVN URL would be an odd, very
+// un-SVN-like thing to force on every client. The returned subPath is
+// whatever remainder of path lies below that repository root (e.g.
+// "trunk/sub"), which the caller should use as a prefix for every
+// subsequent request in the session.
 func FindRepo(path string) (repo *Repo, subPath string, err error) {
 	path = filepath.Clean(path)
 	cur := path
 	var suffix []string
 	for {
-		// Any error here (not just git.ErrRepositoryNotExists) means cur
-		// isn't a repository root: e.g. it may not exist at all, or (for
-		// any but the first, client-supplied cur) be a regular file one
-		// of whose ancestors is the actual repository root. Either way,
-		// the right move is the same: keep walking up.
-		if gr, gerr := git.PlainOpen(cur); gerr == nil {
-			r, rerr := newRepo(cur, gr)
-			if rerr != nil {
-				return nil, "", rerr
+		// Any error here (not just git.ErrRepositoryNotExists) means the
+		// candidate isn't a repository root: e.g. it may not exist at
+		// all, or (for any but the first, client-supplied cur) be a
+		// regular file one of whose ancestors is the actual repository
+		// root. Either way, the right move is the same: keep trying.
+		for _, candidate := range []string{cur, cur + ".git"} {
+			if gr, gerr := git.PlainOpen(candidate); gerr == nil {
+				r, rerr := newRepo(candidate, gr)
+				if rerr != nil {
+					return nil, "", rerr
+				}
+				return r, filepath.Join(suffix...), nil
 			}
-			return r, filepath.Join(suffix...), nil
 		}
 		parent := filepath.Dir(cur)
 		if parent == cur {

@@ -123,6 +123,32 @@ func TestFindRepo(t *testing.T) {
 			t.Fatalf("FindRepo(%q): want an error, got none", outside)
 		}
 	})
+
+	t.Run("repository directory has a .git suffix the URL omits", func(t *testing.T) {
+		parent := t.TempDir()
+		repoDir := filepath.Join(parent, "myrepo.git")
+		if err := os.Mkdir(repoDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, repoDir, "init", "-q", "-b", "main", ".")
+		writeFile(t, repoDir, "trunk/main.go", "package main\n")
+		runGit(t, repoDir, "add", "trunk")
+		runGit(t, repoDir, "commit", "-q", "-m", "initial commit")
+
+		urlPath := filepath.Join(parent, "myrepo") // no ".git" suffix
+		r, sub := mustFindRepo(t, urlPath)
+		if sub != "" {
+			t.Errorf("subPath = %q, want empty", sub)
+		}
+		if got := r.LatestRev(); got != 1 {
+			t.Errorf("LatestRev() = %d, want 1", got)
+		}
+
+		_, sub = mustFindRepo(t, filepath.Join(urlPath, "trunk", "main.go"))
+		if sub != filepath.Join("trunk", "main.go") {
+			t.Errorf("subPath = %q, want %q", sub, filepath.Join("trunk", "main.go"))
+		}
+	})
 }
 
 func TestLatestRev(t *testing.T) {

@@ -184,6 +184,43 @@ func TestInfo(t *testing.T) {
 	})
 }
 
+func TestBareLookingRepoDirectory(t *testing.T) {
+	requireTools(t)
+	bin := buildBinary(t)
+
+	// A repository directory conventionally ends in ".git" (especially a
+	// bare one), but spelling that out in every SVN URL would be odd, so
+	// gitrepo.FindRepo also tries that suffix when the bare path doesn't
+	// exist -- this exercises it through a real "svn" client, the URL
+	// omitting the ".git" suffix that's actually on disk.
+	parent := t.TempDir()
+	repoDir := filepath.Join(parent, "myrepo.git")
+	if err := os.Mkdir(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "init", "-q", "-b", "main", ".")
+	writeFile(t, repoDir, "README.md", "hello\n")
+	runGit(t, repoDir, "add", "README.md")
+	runGit(t, repoDir, "commit", "-q", "-m", "initial commit")
+
+	urlPath := filepath.Join(parent, "myrepo") // no ".git" suffix
+	out, err := runSVNAgainst(t, bin, urlPath, "info")
+	if err != nil {
+		t.Fatalf("svn info: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Revision: 1") {
+		t.Errorf("info output missing revision 1:\n%s", out)
+	}
+
+	out, err = runSVNAgainst(t, bin, filepath.Join(urlPath, "README.md"), "cat")
+	if err != nil {
+		t.Fatalf("svn cat: %v\n%s", err, out)
+	}
+	if out != "hello\n" {
+		t.Errorf("cat output = %q, want %q", out, "hello\n")
+	}
+}
+
 func TestLs(t *testing.T) {
 	requireTools(t)
 	bin := buildBinary(t)
